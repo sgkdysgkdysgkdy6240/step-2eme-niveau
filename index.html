@@ -129,7 +129,7 @@
       justify-content: center;
       box-sizing: border-box;
       padding: 110px 80px 70px;
-      gap: 36px;
+      gap: 28px;
       text-align: center;
     }
 
@@ -144,7 +144,7 @@
 
     #mainImage {
       max-width: 86vw;
-      max-height: 58vh;
+      max-height: 55vh;
       object-fit: contain;
       display: none;
       background: transparent;
@@ -163,7 +163,16 @@
       flex-direction: column;
       align-items: center;
       gap: 18px;
-      margin-top: 10px;
+      margin-top: 8px;
+    }
+
+    #buttonRow {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      flex-wrap: wrap;
     }
 
     #loadingMessage {
@@ -183,6 +192,16 @@
       font-weight: bold;
     }
 
+    #recordStartButton {
+      background: #fff;
+      color: #111;
+    }
+
+    #recordStopButton {
+      background: #ffdddd;
+      color: #990000;
+    }
+
     audio {
       display: none;
     }
@@ -194,7 +213,7 @@
     <div class="startBox">
       <div class="startTitle">Speaking Test Practice</div>
 
-      <input id="studentNameInput" type="text" placeholder="受験者名">
+      <input id="studentNameInput" type="text" placeholder="クラス出席番号名前を入れてください">
 
       <select id="examSelect">
         <option value="">読み込み中...</option>
@@ -225,25 +244,37 @@
       <div id="controlPanel">
         <div id="loadingMessage"></div>
 
-        <button
-          id="replayAudioButton"
-          class="examControlButton"
-          type="button"
-          onclick="replayPromptAudio()"
-          style="display: none;"
-        >
-          音声をもう一度聞く
-        </button>
+        <div id="buttonRow">
+          <button
+            id="replayAudioButton"
+            class="examControlButton"
+            type="button"
+            onclick="replayPromptAudio()"
+            style="display: none;"
+          >
+            もう一度音声を聞く
+          </button>
 
-        <button
-          id="recordStartButton"
-          class="examControlButton"
-          type="button"
-          onclick="handleRecordStart()"
-          style="display: none;"
-        >
-          録音する
-        </button>
+          <button
+            id="recordStartButton"
+            class="examControlButton"
+            type="button"
+            onclick="handleRecordStart()"
+            style="display: none;"
+          >
+            録音開始
+          </button>
+
+          <button
+            id="recordStopButton"
+            class="examControlButton"
+            type="button"
+            onclick="handleRecordStop()"
+            style="display: none;"
+          >
+            録音終了
+          </button>
+        </div>
       </div>
     </div>
 
@@ -252,7 +283,7 @@
 
   <script>
     // ここだけ自分のGAS WebアプリURLに変更してください。
-    const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbye1GCVrnn52OvePdHYm1bAXzFUk91vgCbuwd2sCWowVZZqX0cEVQyeoeRE-5t9_SfB/exec';
+    const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbwTkV3gL5VRAbHO539pzP9MdmYmk6KvLzVnH-rYhadSSLekM4nWKfAo6pgNvy6BkuN1/exec';
 
     let examData = null;
     let studentName = '';
@@ -265,6 +296,11 @@
 
     let currentAudioDataUrl = '';
     let recordStartResolver = null;
+
+    let currentDisplayedImageKey = '';
+    let currentDisplayedImageDataUrl = '';
+
+    let activeCountdownController = null;
 
     window.addEventListener('load', loadExamList);
 
@@ -406,11 +442,11 @@
           showRecordStartButton(true);
           await waitForRecordStart();
 
-          hideStepButtons();
+          hideBeforeRecordingButtons();
 
           await runCountdown(step);
         } else {
-          hideStepButtons();
+          hideAllStepButtons();
           await runCountdown(step);
         }
 
@@ -429,27 +465,46 @@
       messageScreen.textContent = '';
       mainText.textContent = step.text || '';
 
-      mainImage.style.display = 'none';
-      mainImage.removeAttribute('src');
-
       currentAudioDataUrl = '';
 
-      hideStepButtons();
+      hideAllStepButtons();
       setLoadingMessage('');
       setCountdown(step.seconds || 0);
       showRec(false);
 
-      if (step.imageToken) {
-        setLoadingMessage('画像ローディング中');
-
-        const media = await jsonp('media', {
-          token: step.imageToken
-        }, 120000);
-
-        await setImageSrcAndWait(media.dataUrl);
-
-        setLoadingMessage('');
+      if (!step.imageToken) {
+        mainImage.style.display = 'none';
+        mainImage.removeAttribute('src');
+        currentDisplayedImageKey = '';
+        currentDisplayedImageDataUrl = '';
+        return;
       }
+
+      if (
+        step.imageKey &&
+        currentDisplayedImageKey === step.imageKey &&
+        currentDisplayedImageDataUrl
+      ) {
+        mainImage.src = currentDisplayedImageDataUrl;
+        mainImage.style.display = 'block';
+        return;
+      }
+
+      mainImage.style.display = 'none';
+      mainImage.removeAttribute('src');
+
+      setLoadingMessage('画像ローディング中');
+
+      const media = await jsonp('media', {
+        token: step.imageToken
+      }, 120000);
+
+      await setImageSrcAndWait(media.dataUrl);
+
+      currentDisplayedImageKey = step.imageKey || '';
+      currentDisplayedImageDataUrl = media.dataUrl;
+
+      setLoadingMessage('');
     }
 
     function setImageSrcAndWait(src) {
@@ -541,7 +596,10 @@
       if (!currentAudioDataUrl) return;
 
       const button = document.getElementById('replayAudioButton');
+      const startButton = document.getElementById('recordStartButton');
+
       button.disabled = true;
+      startButton.disabled = true;
 
       try {
         await playCurrentPromptAudio();
@@ -549,6 +607,7 @@
         setLoadingMessage('音声を再生できませんでした。');
       } finally {
         button.disabled = false;
+        startButton.disabled = false;
       }
     }
 
@@ -556,45 +615,60 @@
       return new Promise(async function (resolve, reject) {
         const seconds = Number(step.seconds) || 0;
         let recordingSession = null;
+        let timer = null;
+        let ended = false;
+
+        async function finishCountdown() {
+          if (ended) return;
+          ended = true;
+
+          if (timer) {
+            clearInterval(timer);
+            timer = null;
+          }
+
+          activeCountdownController = null;
+          showRecordStopButton(false);
+          setCountdown(0);
+
+          try {
+            if (recordingSession) {
+              await stopRecordingSession(recordingSession);
+            }
+
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        }
 
         try {
           if (step.record) {
             recordingSession = startRecordingSession(step);
+            showRecordStopButton(true);
           }
         } catch (error) {
           reject(error);
           return;
         }
 
+        activeCountdownController = {
+          finish: finishCountdown
+        };
+
         if (seconds <= 0) {
-          setCountdown(0);
-
-          if (recordingSession) {
-            await stopRecordingSession(recordingSession);
-          }
-
-          resolve();
+          await finishCountdown();
           return;
         }
 
         const endAt = Date.now() + seconds * 1000;
 
-        const timer = setInterval(async function () {
+        timer = setInterval(function () {
           const remaining = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
           setCountdown(remaining);
 
           if (remaining <= 0) {
-            clearInterval(timer);
-
-            try {
-              if (recordingSession) {
-                await stopRecordingSession(recordingSession);
-              }
-
-              resolve();
-            } catch (error) {
-              reject(error);
-            }
+            finishCountdown();
           }
         }, 250);
       });
@@ -627,13 +701,21 @@
       return {
         recorder,
         chunks,
-        step
+        step,
+        stopped: false
       };
     }
 
     function stopRecordingSession(session) {
       return new Promise(function (resolve, reject) {
         const recorder = session.recorder;
+
+        if (session.stopped) {
+          resolve();
+          return;
+        }
+
+        session.stopped = true;
 
         recorder.onstop = function () {
           showRec(false);
@@ -760,6 +842,7 @@
 
     async function finishExam() {
       showRec(false);
+      hideAllStepButtons();
       showMessage('提出中です...\nこの画面のままお待ちください。');
 
       if (pendingUploads.length > 0) {
@@ -800,7 +883,7 @@
       document.getElementById('mainImage').style.display = 'none';
       document.getElementById('messageScreen').textContent = message;
 
-      hideStepButtons();
+      hideAllStepButtons();
       setLoadingMessage('');
     }
 
@@ -828,9 +911,21 @@
       button.disabled = false;
     }
 
-    function hideStepButtons() {
+    function showRecordStopButton(show) {
+      const button = document.getElementById('recordStopButton');
+      button.style.display = show ? 'inline-block' : 'none';
+      button.disabled = false;
+    }
+
+    function hideBeforeRecordingButtons() {
       showRecordStartButton(false);
       showReplayButton(false);
+    }
+
+    function hideAllStepButtons() {
+      showRecordStartButton(false);
+      showReplayButton(false);
+      showRecordStopButton(false);
     }
 
     function waitForRecordStart() {
@@ -844,14 +939,22 @@
 
       audio.pause();
 
-      showRecordStartButton(false);
-      showReplayButton(false);
+      hideBeforeRecordingButtons();
       setLoadingMessage('');
 
       if (recordStartResolver) {
         const resolve = recordStartResolver;
         recordStartResolver = null;
         resolve();
+      }
+    }
+
+    function handleRecordStop() {
+      const button = document.getElementById('recordStopButton');
+      button.disabled = true;
+
+      if (activeCountdownController && activeCountdownController.finish) {
+        activeCountdownController.finish();
       }
     }
 
