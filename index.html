@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Speaking Test Practice</title>
+
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      font-family: Arial, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+      background: #111;
+      color: #fff;
+    }
+
+    button,
+    input,
+    select {
+      font-size: 22px;
+      padding: 12px 16px;
+      border-radius: 8px;
+      border: none;
+      box-sizing: border-box;
+    }
+
+    button {
+      cursor: pointer;
+      background: #fff;
+      color: #111;
+      font-weight: bold;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    input,
+    select {
+      width: 420px;
+      background: #fff;
+      color: #111;
+    }
+
+    #startScreen {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #111;
+    }
+
+    .startBox {
+      display: flex;
+      flex-direction: column;
+      gap: 22px;
+      align-items: center;
+      justify-content: center;
+      padding: 48px;
+      border-radius: 20px;
+      background: #222;
+      min-width: 520px;
+    }
+
+    .startTitle {
+      font-size: 40px;
+      font-weight: bold;
+      margin-bottom: 12px;
+    }
+
+    #startStatus {
+      min-height: 32px;
+      font-size: 20px;
+      color: #ffdddd;
+      text-align: center;
+      max-width: 780px;
+      white-space: pre-wrap;
+    }
+
+    #examScreen {
+      width: 100vw;
+      height: 100vh;
+      display: none;
+      position: relative;
+      background: #111;
+    }
+
+    #countdown {
+      position: fixed;
+      top: 24px;
+      left: 32px;
+      font-size: 54px;
+      font-weight: bold;
+      letter-spacing: 2px;
+      z-index: 10;
+    }
+
+    #recIndicator {
+      position: fixed;
+      top: 34px;
+      right: 42px;
+      font-size: 38px;
+      font-weight: bold;
+      color: #ff3333;
+      display: none;
+      z-index: 10;
+    }
+
+    #uploadStatus {
+      position: fixed;
+      bottom: 24px;
+      right: 32px;
+      font-size: 18px;
+      color: #aaa;
+      z-index: 10;
+    }
+
+    #centerContent {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      padding: 110px 80px 70px;
+      gap: 36px;
+      text-align: center;
+    }
+
+    #mainText {
+      font-size: 44px;
+      line-height: 1.45;
+      font-weight: bold;
+      max-width: 86vw;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    #mainImage {
+      max-width: 86vw;
+      max-height: 64vh;
+      object-fit: contain;
+      display: none;
+      background: transparent;
+    }
+
+    #messageScreen {
+      font-size: 44px;
+      line-height: 1.5;
+      font-weight: bold;
+      text-align: center;
+      white-space: pre-wrap;
+    }
+
+    audio {
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="startScreen">
+    <div class="startBox">
+      <div class="startTitle">Speaking Test Practice</div>
+
+      <input id="studentNameInput" type="text" placeholder="受験者名">
+
+      <select id="examSelect">
+        <option value="">読み込み中...</option>
+      </select>
+
+      <button type="button" onclick="checkMicPermission()">
+        マイクを使えるか確認する
+      </button>
+
+      <button id="startButton" type="button" onclick="startExam()">
+        開始
+      </button>
+
+      <div id="startStatus"></div>
+    </div>
+  </div>
+
+  <div id="examScreen">
+    <div id="countdown">00:00</div>
+    <div id="recIndicator">●REC</div>
+    <div id="uploadStatus"></div>
+
+    <div id="centerContent">
+      <div id="mainText"></div>
+      <img id="mainImage" alt="">
+      <div id="messageScreen"></div>
+    </div>
+
+    <audio id="promptAudio"></audio>
+  </div>
+
+  <script>
+    // ここだけ自分のGAS WebアプリURLに変更してください。
+    const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbye1GCVrnn52OvePdHYm1bAXzFUk91vgCbuwd2sCWowVZZqX0cEVQyeoeRE-5t9_SfB/exec';
+
+    let examData = null;
+    let studentName = '';
+    let selectedSpreadsheetId = '';
+    let micStream = null;
+    let pendingUploads = [];
+    let uploadErrors = [];
+    let finished = false;
+
+    window.addEventListener('load', loadExamList);
+
+    window.addEventListener('beforeunload', function (e) {
+      if (!finished && examData) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
+
+    async function loadExamList() {
+      setStartStatus('回の一覧を読み込んでいます...');
+
+      try {
+        const result = await jsonp('list');
+
+        const exams = result.exams || [];
+        const select = document.getElementById('examSelect');
+        select.innerHTML = '';
+
+        if (exams.length === 0) {
+          const option = document.createElement('option');
+          option.value = '';
+          option.textContent = 'スプレッドシートがありません';
+          select.appendChild(option);
+          setStartStatus('指定フォルダ内にスプレッドシートが見つかりません。');
+          return;
+        }
+
+        exams.forEach(function (exam) {
+          const option = document.createElement('option');
+          option.value = exam.id;
+          option.textContent = exam.name;
+          select.appendChild(option);
+        });
+
+        setStartStatus('');
+      } catch (error) {
+        setStartStatus('回の一覧を読み込めませんでした。\n' + getErrorMessage(error));
+      }
+    }
+
+    async function checkMicPermission() {
+      setStartStatus('マイク確認中...');
+
+      if (!window.isSecureContext) {
+        setStartStatus('HTTPSとして認識されていないため、マイクを使えません。');
+        return;
+      }
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setStartStatus('このブラウザではマイクAPIが使えません。Chromeで試してください。');
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        stream.getTracks().forEach(function (track) {
+          track.stop();
+        });
+
+        setStartStatus('マイク確認OKです。');
+      } catch (error) {
+        setStartStatus(
+          'マイク確認に失敗しました。\n' +
+          (error.name || '') + ' / ' + (error.message || '') +
+          '\nブラウザまたはOSのマイク権限を確認してください。'
+        );
+      }
+    }
+
+    async function startExam() {
+      const nameInput = document.getElementById('studentNameInput');
+      const examSelect = document.getElementById('examSelect');
+      const startButton = document.getElementById('startButton');
+
+      studentName = nameInput.value.trim();
+      selectedSpreadsheetId = examSelect.value;
+
+      if (!studentName) {
+        setStartStatus('名前を入れてください！');
+        return;
+      }
+
+      if (!selectedSpreadsheetId) {
+        setStartStatus('回を選択してください。');
+        return;
+      }
+
+      startButton.disabled = true;
+      setStartStatus('準備中です...');
+
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        const result = await jsonp('exam', {
+          spreadsheetId: selectedSpreadsheetId
+        });
+
+        examData = result.exam;
+
+        if (!examData || !examData.steps || examData.steps.length === 0) {
+          throw new Error('遷移データがありません。');
+        }
+
+        document.getElementById('startScreen').style.display = 'none';
+        document.getElementById('examScreen').style.display = 'block';
+
+        await runStep(0);
+      } catch (error) {
+        startButton.disabled = false;
+        setStartStatus(getErrorMessage(error));
+        stopMicStream();
+      }
+    }
+
+    async function runStep(index) {
+      if (!examData || index >= examData.steps.length) {
+        await finishExam();
+        return;
+      }
+
+      const step = examData.steps[index];
+
+      try {
+        await renderStep(step);
+
+        if (step.audioToken) {
+          await playPromptAudio(step.audioToken);
+        }
+
+        await runCountdown(step);
+
+        await runStep(index + 1);
+      } catch (error) {
+        showMessage('エラーが発生しました。\n先生に知らせてください。\n\n' + getErrorMessage(error));
+        stopMicStream();
+      }
+    }
+
+    async function renderStep(step) {
+      const mainText = document.getElementById('mainText');
+      const mainImage = document.getElementById('mainImage');
+      const messageScreen = document.getElementById('messageScreen');
+
+      messageScreen.textContent = '';
+      mainText.textContent = step.text || '';
+      mainImage.style.display = 'none';
+      mainImage.removeAttribute('src');
+
+      setCountdown(step.seconds || 0);
+      showRec(false);
+
+      if (step.imageToken) {
+        mainImage.style.display = 'none';
+        const media = await jsonp('media', { token: step.imageToken }, 120000);
+        mainImage.src = media.dataUrl;
+        mainImage.style.display = 'block';
+      }
+    }
+
+    async function playPromptAudio(audioToken) {
+      const media = await jsonp('media', { token: audioToken }, 120000);
+
+      return new Promise(function (resolve, reject) {
+        const audio = document.getElementById('promptAudio');
+
+        audio.pause();
+        audio.currentTime = 0;
+
+        audio.onended = function () {
+          resolve();
+        };
+
+        audio.onerror = function () {
+          reject(new Error('音声を再生できませんでした。'));
+        };
+
+        audio.src = media.dataUrl;
+
+        const playPromise = audio.play();
+
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch(function () {
+            reject(new Error('音声の自動再生がブロックされました。もう一度開始してください。'));
+          });
+        }
+      });
+    }
+
+    function runCountdown(step) {
+      return new Promise(async function (resolve, reject) {
+        const seconds = Number(step.seconds) || 0;
+        let recordingSession = null;
+
+        try {
+          if (step.record) {
+            recordingSession = startRecordingSession(step);
+          }
+        } catch (error) {
+          reject(error);
+          return;
+        }
+
+        if (seconds <= 0) {
+          setCountdown(0);
+
+          if (recordingSession) {
+            await stopRecordingSession(recordingSession);
+          }
+
+          resolve();
+          return;
+        }
+
+        const endAt = Date.now() + seconds * 1000;
+
+        const timer = setInterval(async function () {
+          const remaining = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
+          setCountdown(remaining);
+
+          if (remaining <= 0) {
+            clearInterval(timer);
+
+            try {
+              if (recordingSession) {
+                await stopRecordingSession(recordingSession);
+              }
+
+              resolve();
+            } catch (error) {
+              reject(error);
+            }
+          }
+        }, 250);
+      });
+    }
+
+    function startRecordingSession(step) {
+      if (!micStream) {
+        throw new Error('マイクが準備できていません。');
+      }
+
+      if (!window.MediaRecorder) {
+        throw new Error('このブラウザは録音に対応していません。');
+      }
+
+      const mimeType = getSupportedMimeType();
+      const options = mimeType ? { mimeType } : undefined;
+
+      const recorder = new MediaRecorder(micStream, options);
+      const chunks = [];
+
+      recorder.ondataavailable = function (event) {
+        if (event.data && event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
+
+      recorder.start();
+      showRec(true);
+
+      return {
+        recorder,
+        chunks,
+        step
+      };
+    }
+
+    function stopRecordingSession(session) {
+      return new Promise(function (resolve, reject) {
+        const recorder = session.recorder;
+
+        recorder.onstop = function () {
+          showRec(false);
+
+          const mimeType = recorder.mimeType || getSupportedMimeType() || 'audio/webm';
+          const blob = new Blob(session.chunks, { type: mimeType });
+
+          const uploadPromise = queueUpload(blob, session.step);
+          pendingUploads.push(uploadPromise);
+
+          resolve();
+        };
+
+        recorder.onerror = function () {
+          showRec(false);
+          reject(new Error('録音中にエラーが発生しました。'));
+        };
+
+        if (recorder.state !== 'inactive') {
+          recorder.stop();
+        } else {
+          showRec(false);
+          resolve();
+        }
+      });
+    }
+
+    function getSupportedMimeType() {
+      const candidates = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/ogg',
+        'audio/mp4'
+      ];
+
+      for (const type of candidates) {
+        if (MediaRecorder.isTypeSupported(type)) {
+          return type;
+        }
+      }
+
+      return '';
+    }
+
+    async function queueUpload(blob, step) {
+      const uploadId = createUploadId();
+      updateUploadStatus();
+
+      try {
+        const base64 = await blobToBase64(blob);
+
+        const payload = {
+          action: 'upload',
+          uploadId,
+          spreadsheetId: selectedSpreadsheetId,
+          stepIndex: step.index,
+          studentName,
+          mimeType: blob.type || 'audio/webm',
+          base64
+        };
+
+        await fetch(GAS_API_URL, {
+          method: 'POST',
+          mode: 'no-cors',
+          body: JSON.stringify(payload)
+        });
+
+        const status = await waitForUploadStatus(uploadId);
+
+        if (!status.ok || status.status === 'error') {
+          throw new Error(status.error || '録音保存に失敗しました。');
+        }
+
+        updateUploadStatus();
+      } catch (error) {
+        uploadErrors.push({
+          title: step.title || 'recording',
+          message: getErrorMessage(error)
+        });
+        updateUploadStatus();
+      }
+    }
+
+    async function waitForUploadStatus(uploadId) {
+      const maxTries = 90;
+
+      for (let i = 0; i < maxTries; i++) {
+        await sleep(1000);
+
+        const result = await jsonp('uploadStatus', {
+          uploadId
+        });
+
+        if (result.status === 'done' || result.status === 'error') {
+          return result;
+        }
+      }
+
+      return {
+        ok: false,
+        status: 'error',
+        error: '保存完了を確認できませんでした。'
+      };
+    }
+
+    function blobToBase64(blob) {
+      return new Promise(function (resolve, reject) {
+        const reader = new FileReader();
+
+        reader.onloadend = function () {
+          const result = String(reader.result || '');
+          const base64 = result.split(',')[1] || '';
+          resolve(base64);
+        };
+
+        reader.onerror = function () {
+          reject(new Error('録音データの変換に失敗しました。'));
+        };
+
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    async function finishExam() {
+      showRec(false);
+      showMessage('提出中です...\nこの画面のままお待ちください。');
+
+      if (pendingUploads.length > 0) {
+        await Promise.all(pendingUploads);
+      }
+
+      stopMicStream();
+      finished = true;
+
+      if (uploadErrors.length > 0) {
+        const lines = uploadErrors.map(function (error) {
+          return '・' + error.title + ': ' + error.message;
+        });
+
+        showMessage(
+          '終了しました。\nただし、一部の録音保存に失敗しました。\n先生に知らせてください。\n\n' +
+          lines.join('\n')
+        );
+      } else {
+        showMessage('終了しました。');
+      }
+
+      setCountdown(0);
+      updateUploadStatus(true);
+    }
+
+    function stopMicStream() {
+      if (micStream) {
+        micStream.getTracks().forEach(function (track) {
+          track.stop();
+        });
+        micStream = null;
+      }
+    }
+
+    function showMessage(message) {
+      document.getElementById('mainText').textContent = '';
+      document.getElementById('mainImage').style.display = 'none';
+      document.getElementById('messageScreen').textContent = message;
+    }
+
+    function setCountdown(seconds) {
+      const safeSeconds = Math.max(0, Number(seconds) || 0);
+      const mm = String(Math.floor(safeSeconds / 60)).padStart(2, '0');
+      const ss = String(safeSeconds % 60).padStart(2, '0');
+
+      document.getElementById('countdown').textContent = mm + ':' + ss;
+    }
+
+    function showRec(show) {
+      document.getElementById('recIndicator').style.display = show ? 'block' : 'none';
+    }
+
+    function updateUploadStatus(done) {
+      const element = document.getElementById('uploadStatus');
+
+      if (done) {
+        element.textContent = '';
+        return;
+      }
+
+      const total = pendingUploads.length;
+
+      if (total === 0) {
+        element.textContent = '';
+        return;
+      }
+
+      if (uploadErrors.length > 0) {
+        element.textContent = '保存エラーあり';
+      } else {
+        element.textContent = '録音保存中...';
+      }
+    }
+
+    function setStartStatus(message) {
+      document.getElementById('startStatus').textContent = message || '';
+    }
+
+    function getErrorMessage(error) {
+      if (!error) return '不明なエラーです。';
+
+      if (typeof error === 'string') {
+        return error;
+      }
+
+      if (error.message) {
+        return error.message;
+      }
+
+      return String(error);
+    }
+
+    function createUploadId() {
+      return 'u_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+    }
+
+    function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    function jsonp(action, params = {}, timeoutMs = 30000) {
+      return new Promise(function (resolve, reject) {
+        const callbackName =
+          '__gas_cb_' +
+          Date.now() +
+          '_' +
+          Math.random().toString(36).slice(2);
+
+        const url = new URL(GAS_API_URL);
+        url.searchParams.set('action', action);
+        url.searchParams.set('callback', callbackName);
+
+        Object.keys(params).forEach(function (key) {
+          url.searchParams.set(key, params[key]);
+        });
+
+        const script = document.createElement('script');
+        let timeoutId = null;
+
+        window[callbackName] = function (data) {
+          cleanup();
+
+          if (data && data.ok === false) {
+            reject(new Error(data.error || 'GAS側でエラーが発生しました。'));
+          } else {
+            resolve(data);
+          }
+        };
+
+        script.onerror = function () {
+          cleanup();
+          reject(new Error('GASとの通信に失敗しました。'));
+        };
+
+        timeoutId = setTimeout(function () {
+          cleanup();
+          reject(new Error('GASからの応答がタイムアウトしました。'));
+        }, timeoutMs);
+
+        function cleanup() {
+          if (timeoutId) clearTimeout(timeoutId);
+          delete window[callbackName];
+          if (script.parentNode) {
+            script.parentNode.removeChild(script);
+          }
+        }
+
+        script.src = url.toString();
+        document.head.appendChild(script);
+      });
+    }
+  </script>
+</body>
+</html>
