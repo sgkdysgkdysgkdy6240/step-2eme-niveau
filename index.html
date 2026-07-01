@@ -642,7 +642,7 @@
         await playCurrentPromptAudio();
         showAudioPlayButton(false);
       } catch (error) {
-        setLoadingMessage('音声が自動再生されない場合は、「音声を再生」を押してください。');
+        setLoadingMessage('音声が自動再生されない場合は、↓下のボタン↓を押してください。');
         await waitForManualAudioPlay();
         showAudioPlayButton(false);
         setLoadingMessage('');
