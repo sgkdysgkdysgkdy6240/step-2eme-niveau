@@ -192,6 +192,11 @@
       font-weight: bold;
     }
 
+    #audioPlayButton {
+      background: #fff;
+      color: #111;
+    }
+
     #recordStartButton {
       background: #fff;
       color: #111;
@@ -211,18 +216,17 @@
 <body>
   <div id="startScreen">
     <div class="startBox">
-      <div class="startTitle">Speaking Test Practice KADOYA作成</div>
+      <div class="startTitle">Speaking Test Practice</div>
 
-      <input id="studentNameInput" type="text" placeholder="SIDのみ正確に s12345">
+      <input id="studentNameInput" type="text" placeholder="受験者名">
 
       <select id="examSelect">
         <option value="">読み込み中...</option>
       </select>
 
       <button type="button" onclick="checkMicPermission()">
-        マイク権限確認(イヤホン禁止)
+        マイクを使えるか確認する
       </button>
-      ↑初回のみ小さい画面(ポップアップ)が出るので、マイクを許可してください！！！失敗したら動きません
 
       <button id="startButton" type="button" onclick="startExam()">
         開始
@@ -246,6 +250,16 @@
         <div id="loadingMessage"></div>
 
         <div id="buttonRow">
+          <button
+            id="audioPlayButton"
+            class="examControlButton"
+            type="button"
+            onclick="handleAudioPlay()"
+            style="display: none;"
+          >
+            音声を再生
+          </button>
+
           <button
             id="replayAudioButton"
             class="examControlButton"
@@ -284,7 +298,7 @@
 
   <script>
     // ここだけ自分のGAS WebアプリURLに変更してください。
-    const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbwTkV3gL5VRAbHO539pzP9MdmYmk6KvLzVnH-rYhadSSLekM4nWKfAo6pgNvy6BkuN1/exec';
+    const GAS_API_URL = 'ここにGASのWebアプリURLを入れる';
 
     let examData = null;
     let studentName = '';
@@ -297,6 +311,7 @@
 
     let currentAudioDataUrl = '';
     let recordStartResolver = null;
+    let manualAudioResolver = null;
 
     let currentDisplayedImageKey = '';
     let currentDisplayedImageDataUrl = '';
@@ -432,7 +447,7 @@
 
         if (step.audioToken) {
           await loadPromptAudio(step.audioToken);
-          await playCurrentPromptAudio();
+          await playPromptAudioWithFallback();
 
           if (step.record) {
             showReplayButton(true);
@@ -467,6 +482,7 @@
       mainText.textContent = step.text || '';
 
       currentAudioDataUrl = '';
+      manualAudioResolver = null;
 
       hideAllStepButtons();
       setLoadingMessage('');
@@ -563,6 +579,21 @@
       });
     }
 
+    async function playPromptAudioWithFallback() {
+      showAudioPlayButton(true);
+      setLoadingMessage('');
+
+      try {
+        await playCurrentPromptAudio();
+        showAudioPlayButton(false);
+      } catch (error) {
+        setLoadingMessage('音声が自動再生されない場合は、「音声を再生」を押してください。');
+        await waitForManualAudioPlay();
+        showAudioPlayButton(false);
+        setLoadingMessage('');
+      }
+    }
+
     function playCurrentPromptAudio() {
       return new Promise(function (resolve, reject) {
         const audio = document.getElementById('promptAudio');
@@ -586,20 +617,59 @@
         const playPromise = audio.play();
 
         if (playPromise && typeof playPromise.catch === 'function') {
-          playPromise.catch(function () {
-            reject(new Error('音声の自動再生がブロックされました。もう一度開始してください。'));
+          playPromise.catch(function (error) {
+            reject(error || new Error('音声の自動再生がブロックされました。'));
           });
         }
       });
     }
 
+    function waitForManualAudioPlay() {
+      return new Promise(function (resolve) {
+        manualAudioResolver = resolve;
+      });
+    }
+
+    async function handleAudioPlay() {
+      if (!currentAudioDataUrl) return;
+
+      const playButton = document.getElementById('audioPlayButton');
+      const replayButton = document.getElementById('replayAudioButton');
+      const startButton = document.getElementById('recordStartButton');
+
+      playButton.disabled = true;
+      replayButton.disabled = true;
+      startButton.disabled = true;
+      setLoadingMessage('');
+
+      try {
+        await playCurrentPromptAudio();
+
+        showAudioPlayButton(false);
+
+        if (manualAudioResolver) {
+          const resolve = manualAudioResolver;
+          manualAudioResolver = null;
+          resolve();
+        }
+      } catch (error) {
+        setLoadingMessage('音声を再生できませんでした。もう一度押してください。');
+        playButton.disabled = false;
+      } finally {
+        replayButton.disabled = false;
+        startButton.disabled = false;
+      }
+    }
+
     async function replayPromptAudio() {
       if (!currentAudioDataUrl) return;
 
-      const button = document.getElementById('replayAudioButton');
+      const playButton = document.getElementById('audioPlayButton');
+      const replayButton = document.getElementById('replayAudioButton');
       const startButton = document.getElementById('recordStartButton');
 
-      button.disabled = true;
+      playButton.disabled = true;
+      replayButton.disabled = true;
       startButton.disabled = true;
 
       try {
@@ -607,7 +677,8 @@
       } catch (error) {
         setLoadingMessage('音声を再生できませんでした。');
       } finally {
-        button.disabled = false;
+        playButton.disabled = false;
+        replayButton.disabled = false;
         startButton.disabled = false;
       }
     }
@@ -900,6 +971,12 @@
       document.getElementById('recIndicator').style.display = show ? 'block' : 'none';
     }
 
+    function showAudioPlayButton(show) {
+      const button = document.getElementById('audioPlayButton');
+      button.style.display = show ? 'inline-block' : 'none';
+      button.disabled = false;
+    }
+
     function showRecordStartButton(show) {
       const button = document.getElementById('recordStartButton');
       button.style.display = show ? 'inline-block' : 'none';
@@ -919,11 +996,13 @@
     }
 
     function hideBeforeRecordingButtons() {
+      showAudioPlayButton(false);
       showRecordStartButton(false);
       showReplayButton(false);
     }
 
     function hideAllStepButtons() {
+      showAudioPlayButton(false);
       showRecordStartButton(false);
       showReplayButton(false);
       showRecordStopButton(false);
